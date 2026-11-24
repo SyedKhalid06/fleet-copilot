@@ -17,7 +17,8 @@
 # COMMAND ----------
 
 # TODO
-%pip install faiss-cpu rank-bm25 openai tiktoken -q
+
+%pip install -U "mlflow[databricks]>=3.1" faiss-cpu rank-bm25 openai tiktoken -q
 dbutils.library.restartPython()
 # COMMAND ----------
 
@@ -40,6 +41,9 @@ import fleet_rag.chunking as C
 importlib.reload(D); importlib.reload(C)
 
 OPENAI_KEY = dbutils.secrets.get(scope="fleet", key="openai_api_key")   # used in step 6
+import mlflow
+user = spark.sql("SELECT current_user()").first()[0]
+mlflow.set_experiment(f"/Users/{user}/fleet-copilot")
 # COMMAND ----------
 
 # MAGIC %md ## Step 3 · Load `gold.documents` into pandas
