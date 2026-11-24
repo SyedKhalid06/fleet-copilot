@@ -87,3 +87,42 @@ print(S.run_sql(spark, "SELECT no_such_column FROM gold.vehicle_daily"))
 
 # a blocked query never reaches Spark
 print(S.run_sql(spark, "SELECT * FROM eval.scenarios"))
+
+# COMMAND ----------
+
+# MAGIC %md ## Step 6 · LLM client + automatic tracing of LLM calls
+
+# COMMAND ----------
+
+from openai import OpenAI
+importlib.reload(S)
+
+client = OpenAI(api_key=dbutils.secrets.get(scope="fleet", key="openai_api_key"))
+mlflow.openai.autolog()        # every chat call (prompt, SQL answer, tokens, cost) appears in the trace
+
+# COMMAND ----------
+
+# MAGIC %md ## Step 7 · Ask questions
+
+# COMMAND ----------
+
+import pandas as pd
+
+def ask(question):
+    r = S.ask_sql(question, spark, client, schema_context)
+    print("\n" + "=" * 100)
+    print(f"Q: {question}")
+    print(f"attempts: {r['attempts']} | ok: {r['ok']} | rows: {r.get('row_count')}")
+    print(r["sql"] or "")
+    if r["ok"]:
+        display(pd.DataFrame(r["rows"]).head(10))
+    else:
+        print("ERROR:", r["error"])
+
+ask("Which trucks need attention right now and why?")
+ask("What was RTM-021's fuel consumption per month compared with its peers?")
+ask("Which depot had the most breakdowns, and how many workshop hours did each depot use?")
+ask("Which 5 drivers used the most fuel compared to their peers in September 2026?")
+ask("Show open faults that nobody has repaired yet.")
+ask("What was the maintenance cost per 1000 km for trucks in Gothenburg?")
+ask("What is the weather in Gothenburg today?")

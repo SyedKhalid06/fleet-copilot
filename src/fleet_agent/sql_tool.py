@@ -131,3 +131,62 @@ def _jsonable(d: dict) -> dict:
             v = [x if isinstance(x, (int, float, str, type(None))) else str(x) for x in v]
         out[k] = v
     return out
+
+# ------------------------------------------------------------------ LLM: question -> SQL
+SQL_SYSTEM_PROMPT = """You write Databricks SQL (Spark SQL) for a truck fleet operations assistant.
+
+Rules:
+- Use ONLY the tables and columns in the schema below. Always write tables as gold.<table_name>.
+- Write ONE read-only SELECT query (WITH/CTEs allowed). Never modify data.
+- Trucks are identified by unit_no, e.g. 'GOT-028'. Use the exact values shown in [values: ...].
+- For "status", "right now" or "needs attention" questions, prefer gold.vehicle_current_status.
+- local_date and month are DATE columns (month = first day of the month). Timestamps are UTC.
+- Costs are in each depot's currency: never add EUR and USD together; group by currency.
+- For rankings add ORDER BY, and LIMIT 50 unless the user asks for everything.
+- If the question cannot be answered from these tables, return exactly: CANNOT_ANSWER
+Return only the SQL. No explanation, no markdown.
+
+Business glossary:
+- Depot codes: GOT = Gothenburg, HAM = Hamburg, RTM = Rotterdam, CHI = Chicago.
+- "Fuel consumption" / "fuel use" = l_per_100km (litres per 100 km).
+- "Peers" = trucks of the same model and duty cycle in the same month.
+
+Schema:
+{schema}"""
+
+_FENCE = re.compile(r"```(?:sql)?\s*(.*?)```", re.S | re.I)
+
+
+def generate_sql(question: str, schema_context: str, client, model: str = "gpt-4o-mini",
+                 previous_sql: str = None, error: str = None) -> str:
+    """Ask the LLM for SQL. If a previous attempt failed, show it the SQL and the error to fix."""
+    messages = [{"role": "system", "content": SQL_SYSTEM_PROMPT.format(schema=schema_context)},
+                {"role": "user", "content": question}]
+    if previous_sql and error:
+        messages += [{"role": "assistant", "content": previous_sql},
+                     {"role": "user", "content": f"That query failed with: {error}\nFix it. Return only the SQL."}]
+    resp = client.chat.completions.create(model=model, messages=messages, temperature=0)
+    text = resp.choices[0].message.content.strip()
+    m = _FENCE.search(text)                      # in case the model wraps it in ```sql ... ```
+    return (m.group(1) if m else text).strip().rstrip(";")
+
+
+def ask_sql(question: str, spark, client, schema_context: str, model: str = "gpt-4o-mini",
+            max_attempts: int = 2) -> dict:
+    """Question -> SQL -> rows, retrying once with the error message if the SQL fails."""
+    with mlflow.start_span(name="ask_sql", span_type=SpanType.CHAIN) as span:
+        span.set_inputs({"question": question, "model": model})
+        sql, error, result = None, None, {}
+        for attempt in range(1, max_attempts + 1):
+            sql = generate_sql(question, schema_context, client, model, previous_sql=sql, error=error)
+            if sql.strip().upper() == "CANNOT_ANSWER":
+                result = {"ok": False, "sql": None, "error": "The fleet tables cannot answer this question.",
+                          "cannot_answer": True}
+                break
+            result = run_sql(spark, sql)
+            if result["ok"]:
+                break
+            error = result["error"]
+        result.update({"question": question, "attempts": attempt})
+        span.set_outputs({k: result.get(k) for k in ("ok", "sql", "row_count", "attempts", "error")})
+        return result
