@@ -72,6 +72,15 @@ display(sop_docs)
 # COMMAND ----------
 
 # TODO
+dtc_docs = D.dtc_guide_documents(
+    spark.table("silver.spn_reference"),
+    spark.table("silver.fmi_reference"),
+    spark.table("silver.dtc_events"),
+)
+print("guides:", dtc_docs.count())
+print(dtc_docs.filter("doc_id = 'DTC-SPN-110'").first().text)
+print()
+print(dtc_docs.filter("doc_id = 'DTC-SPN-655'").first().text)
 
 # COMMAND ----------
 

@@ -23,6 +23,15 @@ DOC_SCHEMA = T.StructType([
     T.StructField("source_ref", T.StringType()),
 ])
 
+# Which SOP covers each fault code
+SPN_SOP = {110: "SOP-01", 111: "SOP-01",
+           3719: "SOP-02", 3251: "SOP-02",
+           3226: "SOP-03", 4364: "SOP-03", 5246: "SOP-03",
+           168: "SOP-04",
+           94: "SOP-05", 102: "SOP-05", 651: "SOP-05", 652: "SOP-05", 653: "SOP-05",
+           654: "SOP-05", 655: "SOP-05", 656: "SOP-05",
+           1761: "SOP-08"}
+
 # Which truck system each SOP covers (by file number), same names as work_orders.system_category
 SOP_SYSTEM = {"01": "cooling", "02": "aftertreatment", "03": "aftertreatment", "04": "electrical",
               "05": "fuel_system", "06": "general", "07": "scheduled_service", "08": "aftertreatment"}
@@ -94,7 +103,48 @@ def sop_documents(sop_folder: str):
     return docs
 
 
-def dtc_guide_documents(spn_ref_df, fmi_ref_df, dtc_events_df):
-    """SPN/FMI reference tables -> one guide document per SPN."""
-    # TODO
-    raise NotImplementedError
+def dtc_guide_documents(spn_ref, fmi_ref, dtc_events):
+    """SPN/FMI reference tables + fleet fault history -> one guide document per SPN."""
+
+    # 1. How often each failure mode (SPN + FMI) actually happened in the fleet
+    seen = (dtc_events.groupBy("spn", "fmi", "lamp")
+            .agg(F.count("*").alias("events"), F.countDistinct("vin").alias("trucks"))
+            .join(fmi_ref, "fmi", "left")
+            .withColumn("line", F.format_string("- FMI %d: %s. Lamp: %s. Seen %d times on %d trucks.",
+                                                "fmi", "fmi_description", "lamp", "events", "trucks"))
+            .withColumn("code", F.concat(F.lit("SPN "), F.col("spn"), F.lit(" FMI "), F.col("fmi"))))
+
+    # 2. One row per SPN: its lines sorted by FMI, and its list of codes
+    per_spn = (seen.groupBy("spn")
+               .agg(F.transform(F.sort_array(F.collect_list(F.struct("fmi", "line"))), lambda x: x["line"]).alias("lines"),
+                    F.sort_array(F.collect_set("code")).alias("codes")))
+
+    # 3. Look up the SOP for each SPN (python dict -> Spark map)
+    sop_map = F.create_map([F.lit(x) for pair in SPN_SOP.items() for x in pair])
+    ecu = F.when(F.col("source_address") == 61, "aftertreatment ECU").otherwise("engine ECU")
+    system = F.when(F.col("system") == "fuel", "fuel_system").otherwise(F.col("system"))
+
+    g = spn_ref.join(per_spn, "spn", "left")
+    text = F.concat_ws("\n",
+        F.format_string("Fault code guide: SPN %d - %s", "spn", "spn_name"),
+        F.concat(F.lit("System: "), system, F.lit(" | Reported by: "), ecu,
+                 F.lit(" (source address "), F.col("source_address").cast("string"), F.lit(")")),
+        F.when(F.size("lines") > 0,
+               F.concat(F.lit("Failure modes seen in this fleet:\n"), F.concat_ws("\n", "lines")))
+         .otherwise(F.lit("Not seen in this fleet during the data period.")),
+        F.concat(F.lit("What to do: follow "), F.coalesce(sop_map[F.col("spn")], F.lit("SOP-06")), F.lit(".")))
+
+    # 4. Standard document columns
+    return g.select(
+        F.concat(F.lit("DTC-SPN-"), F.col("spn")).alias("doc_id"),
+        F.lit("dtc_guide").alias("doc_type"),
+        F.format_string("SPN %d - %s", "spn", "spn_name").alias("title"),
+        text.alias("text"),
+        F.lit(None).cast("string").alias("vin"),
+        F.lit(None).cast("string").alias("unit_no"),
+        F.lit(None).cast("string").alias("model"),
+        system.alias("system_category"),
+        F.coalesce("codes", F.array().cast("array<string>")).alias("dtc_codes"),
+        F.lit(None).cast("date").alias("doc_date"),
+        F.concat(F.lit("silver.spn_reference/"), F.col("spn")).alias("source_ref"),
+    )
