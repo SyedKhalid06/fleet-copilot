@@ -89,7 +89,21 @@ print(dtc_docs.filter("doc_id = 'DTC-SPN-655'").first().text)
 # COMMAND ----------
 
 # TODO
+from pyspark.sql import functions as F
 
+documents = (wo_docs
+             .unionByName(sop_docs)
+             .unionByName(dtc_docs)
+             # some older work orders say "fuel", the rest say "fuel_system": use one name everywhere
+             .withColumn("system_category",
+                         F.when(F.col("system_category") == "fuel", "fuel_system").otherwise(F.col("system_category")))
+             .withColumn("n_chars", F.length("text")))
+
+documents.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable("gold.documents")
+
+spark.sql("""COMMENT ON TABLE gold.documents IS
+  'All searchable text for the Copilot: work-order notes, SOPs and fault code guides. One row per document; chunked in notebook 06.'""")
+print("gold.documents:", spark.table("gold.documents").count(), "rows")
 # COMMAND ----------
 
 # MAGIC %md ## Step 6 · Sanity checks
@@ -98,3 +112,17 @@ print(dtc_docs.filter("doc_id = 'DTC-SPN-655'").first().text)
 # COMMAND ----------
 
 # TODO
+docs = spark.table("gold.documents")
+
+# 1. How many documents of each type, and how long they are
+display(docs.groupBy("doc_type").agg(
+    F.count("*").alias("docs"),
+    F.round(F.avg("n_chars")).alias("avg_chars"),
+    F.max("n_chars").alias("max_chars")))
+
+# 2. No empty text, no duplicate ids
+print("empty texts:", docs.filter(F.col("text").isNull() | (F.length(F.trim("text")) == 0)).count())
+print("duplicate doc_ids:", docs.groupBy("doc_id").count().filter("count > 1").count())
+
+# 3. Coverage: which systems have repairs, SOPs and guides
+display(docs.groupBy("system_category").pivot("doc_type").count().orderBy("system_category"))
