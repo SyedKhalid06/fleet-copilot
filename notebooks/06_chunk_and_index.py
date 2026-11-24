@@ -17,7 +17,8 @@
 # COMMAND ----------
 
 # TODO
-
+%pip install faiss-cpu rank-bm25 openai tiktoken -q
+dbutils.library.restartPython()
 # COMMAND ----------
 
 # MAGIC %md ## Step 2 · Setup + OpenAI key from a Databricks secret (never paste the key in a notebook)
@@ -25,7 +26,20 @@
 # COMMAND ----------
 
 # TODO
+dbutils.widgets.text("catalog", "fleet_copilot", "Catalog")
+CATALOG = dbutils.widgets.get("catalog")
+spark.sql(f"USE CATALOG {CATALOG}")
 
+import os, sys, importlib
+src = os.path.abspath(os.path.join(os.getcwd(), "..", "src"))
+if src not in sys.path:
+    sys.path.insert(0, src)
+
+import fleet_rag.documents as D
+import fleet_rag.chunking as C
+importlib.reload(D); importlib.reload(C)
+
+OPENAI_KEY = dbutils.secrets.get(scope="fleet", key="openai_api_key")   # used in step 6
 # COMMAND ----------
 
 # MAGIC %md ## Step 3 · Load `gold.documents` into pandas
@@ -33,7 +47,8 @@
 # COMMAND ----------
 
 # TODO
-
+docs = [row.asDict() for row in spark.table("gold.documents").collect()]
+print(len(docs), "documents")
 # COMMAND ----------
 
 # MAGIC %md ## Step 4 · Chunk
@@ -43,7 +58,17 @@
 # COMMAND ----------
 
 # TODO
+chunks = C.chunk_documents(docs, max_tokens=400, overlap_tokens=50)
+print(len(chunks), "chunks")
 
+from collections import Counter
+print(Counter(c["doc_type"] for c in chunks))
+print("max tokens:", max(c["n_tokens"] for c in chunks))
+
+for c in chunks:
+    if c["doc_id"] == "SOP-01":
+        print("\n-----", c["chunk_id"], c["n_tokens"], "tokens -----")
+        print(c["chunk_text"])
 # COMMAND ----------
 
 # MAGIC %md ## Step 5 · Save chunks as `gold.document_chunks`
@@ -51,7 +76,19 @@
 # COMMAND ----------
 
 # TODO
+from pyspark.sql import types as T
 
+chunk_schema = T.StructType(
+    [f for f in D.DOC_SCHEMA.fields if f.name != "text"] + [
+        T.StructField("chunk_id", T.StringType()),
+        T.StructField("chunk_index", T.IntegerType()),
+        T.StructField("chunk_text", T.StringType()),
+        T.StructField("n_tokens", T.IntegerType()),
+    ])
+
+(spark.createDataFrame(chunks, schema=chunk_schema)
+ .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable("gold.document_chunks"))
+print("gold.document_chunks:", spark.table("gold.document_chunks").count())
 # COMMAND ----------
 
 # MAGIC %md ## Step 6 · Embed chunks with OpenAI (batched) and build the FAISS index
