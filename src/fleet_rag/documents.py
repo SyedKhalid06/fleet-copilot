@@ -4,7 +4,30 @@ Output columns: doc_id, doc_type, title, text, vin, unit_no, model, system_categ
                 dtc_codes, doc_date, source_ref
 """
 from pyspark.sql import functions as F
+import os
+import re
+from pyspark.sql import types as T
 
+# Every document source returns these columns, so they can be unioned into one table
+DOC_SCHEMA = T.StructType([
+    T.StructField("doc_id", T.StringType()),
+    T.StructField("doc_type", T.StringType()),
+    T.StructField("title", T.StringType()),
+    T.StructField("text", T.StringType()),
+    T.StructField("vin", T.StringType()),
+    T.StructField("unit_no", T.StringType()),
+    T.StructField("model", T.StringType()),
+    T.StructField("system_category", T.StringType()),
+    T.StructField("dtc_codes", T.ArrayType(T.StringType())),
+    T.StructField("doc_date", T.DateType()),
+    T.StructField("source_ref", T.StringType()),
+])
+
+# Which truck system each SOP covers (by file number), same names as work_orders.system_category
+SOP_SYSTEM = {"01": "cooling", "02": "aftertreatment", "03": "aftertreatment", "04": "electrical",
+              "05": "fuel_system", "06": "general", "07": "scheduled_service", "08": "aftertreatment"}
+
+CODE_PATTERN = re.compile(r"SPN \d+ FMI \d+")   # finds codes like "SPN 110 FMI 16"
 
 def work_order_documents(work_orders, parts, vehicles):
     """Work orders -> one searchable document per job (scheduled services excluded)."""
@@ -46,8 +69,29 @@ def work_order_documents(work_orders, parts, vehicles):
 
 def sop_documents(sop_folder: str):
     """Markdown SOP files -> list of document dicts. One per file."""
-    # TODO
-    raise NotImplementedError
+    docs = []
+    for name in sorted(os.listdir(sop_folder)):
+        if not name.endswith(".md"):
+            continue
+        with open(os.path.join(sop_folder, name), encoding="utf-8") as f:
+            text = f.read()
+
+        # title = first line that starts with "# "
+        title = next((line[2:].strip() for line in text.splitlines() if line.startswith("# ")), name)
+        number = name[:2]                                   # "01_coolant..." -> "01"
+
+        docs.append({
+            "doc_id": f"SOP-{number}",
+            "doc_type": "sop",
+            "title": title,
+            "text": text,
+            "vin": None, "unit_no": None, "model": None,   # SOPs apply to the whole fleet
+            "system_category": SOP_SYSTEM.get(number, "general"),
+            "dtc_codes": sorted(set(CODE_PATTERN.findall(text))),
+            "doc_date": None,
+            "source_ref": f"documents/sops/{name}",
+        })
+    return docs
 
 
 def dtc_guide_documents(spn_ref_df, fmi_ref_df, dtc_events_df):

@@ -55,7 +55,15 @@ print(wo_docs.first().text)
 # COMMAND ----------
 
 # TODO
+sop_folder = os.path.abspath(os.path.join(os.getcwd(), "..", "documents", "sops"))
+sop_list = D.sop_documents(sop_folder)
 
+print(len(sop_list), "SOPs")
+for d in sop_list:
+    print(d["doc_id"], "|", d["system_category"], "|", d["title"], "|", d["dtc_codes"])
+
+sop_docs = spark.createDataFrame(sop_list, schema=D.DOC_SCHEMA)   # list of dicts -> Spark table
+display(sop_docs)
 # COMMAND ----------
 
 # MAGIC %md ## Step 4 · Fault code guide → documents
