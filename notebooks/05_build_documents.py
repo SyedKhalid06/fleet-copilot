@@ -19,7 +19,17 @@
 # COMMAND ----------
 
 # TODO
+dbutils.widgets.text("catalog", "fleet_copilot", "Catalog")
+CATALOG = dbutils.widgets.get("catalog")
+spark.sql(f"USE CATALOG {CATALOG}")
 
+import os, sys, importlib
+src = os.path.abspath(os.path.join(os.getcwd(), "..", "src"))
+if src not in sys.path:
+    sys.path.insert(0, src)
+
+import fleet_rag.documents as D
+importlib.reload(D)
 # COMMAND ----------
 
 # MAGIC %md ## Step 2 · Work orders → documents
@@ -29,7 +39,14 @@
 # COMMAND ----------
 
 # TODO
-
+wo_docs = D.work_order_documents(
+    spark.table("silver.work_orders"),
+    spark.table("silver.work_order_parts"),
+    spark.table("silver.vehicles"),
+)
+print("documents:", wo_docs.count())
+display(wo_docs.limit(5))
+print(wo_docs.first().text)
 # COMMAND ----------
 
 # MAGIC %md ## Step 3 · SOP markdown files → documents
