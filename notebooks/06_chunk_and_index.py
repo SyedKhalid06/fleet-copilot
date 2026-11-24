@@ -96,7 +96,13 @@ print("gold.document_chunks:", spark.table("gold.document_chunks").count())
 # COMMAND ----------
 
 # TODO
+from openai import OpenAI
+import fleet_rag.retrieval as R
+importlib.reload(R)
 
+client = OpenAI(api_key=OPENAI_KEY)
+embeddings = R.embed_texts([c["chunk_text"] for c in chunks], client)
+print(embeddings.shape)        # expect (275, 1536)
 # COMMAND ----------
 
 # MAGIC %md ## Step 7 · Build the BM25 index
@@ -104,7 +110,8 @@ print("gold.document_chunks:", spark.table("gold.document_chunks").count())
 # COMMAND ----------
 
 # TODO
-
+index = R.HybridIndex(chunks, embeddings)
+print("FAISS vectors:", index.faiss.ntotal, "| BM25 docs:", index.bm25.corpus_size)
 # COMMAND ----------
 
 # MAGIC %md ## Step 8 · Save both indexes + chunk metadata to the volume
@@ -112,7 +119,12 @@ print("gold.document_chunks:", spark.table("gold.document_chunks").count())
 # COMMAND ----------
 
 # TODO
+spark.sql("CREATE VOLUME IF NOT EXISTS gold.rag_index COMMENT 'FAISS + BM25 retrieval index files'")
+INDEX_DIR = f"/Volumes/{CATALOG}/gold/rag_index/v1"
 
+index.save(INDEX_DIR)
+reloaded = R.HybridIndex.load(INDEX_DIR)
+print("reloaded chunks:", len(reloaded.chunks))
 # COMMAND ----------
 
 # MAGIC %md ## Step 9 · Test: hybrid search (FAISS + BM25 fused with Reciprocal Rank Fusion)
@@ -121,3 +133,14 @@ print("gold.document_chunks:", spark.table("gold.document_chunks").count())
 # COMMAND ----------
 
 # TODO
+def show(query, **filters):
+    print(f"\n=== {query}   {filters or ''}")
+    for r in index.search(query, client, k=5, filters=filters or None):
+        print(f"{r['score']:.4f}  dense#{r['dense_rank']}  bm25#{r['bm25_rank']}  "
+              f"{r['chunk_id']:<16} {r['title'][:55]}")
+
+show("coolant temperature keeps rising on long climbs")
+show("SPN 3719 FMI 16")
+show("truck would not start in the cold")
+show("injector replaced, fuel consumption back to normal")
+show("what to do", doc_type="sop", system_category="cooling")
