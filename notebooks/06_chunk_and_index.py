@@ -43,7 +43,7 @@ importlib.reload(D); importlib.reload(C)
 OPENAI_KEY = dbutils.secrets.get(scope="fleet", key="openai_api_key")   # used in step 6
 import mlflow
 user = spark.sql("SELECT current_user()").first()[0]
-mlflow.set_experiment(f"/Users/{user}/fleet-copilot")
+mlflow.set_experiment(f"/Users/{user}/fleet-copilot-traces")
 # COMMAND ----------
 
 # MAGIC %md ## Step 3 · Load `gold.documents` into pandas
