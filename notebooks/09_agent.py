@@ -94,3 +94,53 @@ out = graph.invoke({"messages": history})
 print("route:     ", out["route"])
 print("standalone:", out["question"])
 print("entities:  ", out["entities"])
+
+# COMMAND ----------
+
+# MAGIC %md ## Step 6 · Build the tools and the full agent
+
+# COMMAND ----------
+
+import fleet_agent.sql_tool as S
+import fleet_rag.retrieval as R
+importlib.reload(S); importlib.reload(R); importlib.reload(A)
+from openai import OpenAI
+
+client = OpenAI(api_key=OPENAI_KEY)
+tools = A.FleetTools(
+    spark=spark,
+    client=client,
+    schema_context=S.get_schema_context(spark, CATALOG),
+    index=R.HybridIndex.load(f"/Volumes/{CATALOG}/gold/rag_index/v1"),
+    spn_names={r.spn: r.spn_name for r in spark.table("silver.spn_reference").collect()},
+)
+agent = A.build_agent(llm, tools)
+print(agent.get_graph().draw_mermaid())
+
+# COMMAND ----------
+
+# MAGIC %md ## Step 7 · First real answers
+
+# COMMAND ----------
+
+def ask(question):
+    out = agent.invoke({"messages": [HumanMessage(question)]})
+    print("\n" + "=" * 100)
+    print(f"Q: {question}")
+    print(f"route: {out['route']}  | standalone: {out['question']}")
+    if out.get("sql_result"):
+        r = out["sql_result"]
+        print(f"SQL ok={r.get('ok')} rows={r.get('row_count')} attempts={r.get('attempts')}")
+    if out.get("docs"):
+        print("docs:", [d["doc_id"] for d in out["docs"]])
+    print("citations:", out.get("citations"))
+    print("-" * 100)
+    print(out["answer"])
+
+ask("Which trucks need attention right now and why?")
+ask("What does SPN 3719 FMI 16 mean and what should the driver do?")
+ask("Why has RTM-021's fuel consumption gone up, and was it fixed?")
+ask("What's wrong with GOT-028 and what should the workshop check?")
+ask("Did the first repair on HAM-014's cooling system fix the problem?")
+ask("Is it fixed now?")
+ask("What's the weather today?")
