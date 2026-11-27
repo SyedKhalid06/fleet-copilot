@@ -144,3 +144,61 @@ ask("What's wrong with GOT-028 and what should the workshop check?")
 ask("Did the first repair on HAM-014's cooling system fix the problem?")
 ask("Is it fixed now?")
 ask("What's the weather today?")
+
+
+# COMMAND ----------
+
+# MAGIC %md ## Step 8 · Agent with grading, citation check and memory
+
+# COMMAND ----------
+
+from langgraph.checkpoint.memory import InMemorySaver
+importlib.reload(A)
+
+agent = A.build_agent(llm, tools, checkpointer=InMemorySaver())
+print(agent.get_graph().draw_mermaid())
+
+# COMMAND ----------
+
+# MAGIC %md ## Step 9 · Rerun the 7 questions
+
+# COMMAND ----------
+
+import uuid
+
+def ask(question, thread_id=None):
+    config = {"configurable": {"thread_id": thread_id or str(uuid.uuid4())},   # one thread = one conversation
+              "recursion_limit": 25}                                            # safety net against loops
+    out = agent.invoke({"messages": [HumanMessage(question)]}, config)
+    print("\n" + "=" * 100)
+    print(f"Q: {question}")
+    print(f"route: {out['route']} | standalone: {out['question']}")
+    if out.get("sql_result"):
+        r = out["sql_result"]
+        print(f"SQL ok={r.get('ok')} rows={r.get('row_count')}")
+    if out.get("docs"):
+        print(f"docs: {[d['doc_id'] for d in out['docs']]}")
+        print(f"grade: relevant={out.get('relevant')} retries={out.get('attempts')} note={out.get('grade_note')!r}")
+    print(f"citations: {out.get('citations')} | invalid: {out.get('invalid_citations')}")
+    print("-" * 100)
+    print(out["answer"])
+    return out
+
+ask("Which trucks need attention right now and why?")
+ask("What does SPN 3719 FMI 16 mean and what should the driver do?")
+ask("Why has RTM-021's fuel consumption gone up, and was it fixed?")
+ask("What's wrong with GOT-028 and what should the workshop check?")
+ask("Did the first repair on HAM-014's cooling system fix the problem?")
+ask("Is it fixed now?")
+ask("What's the weather today?")
+
+# COMMAND ----------
+
+# MAGIC %md ## Step 10 · A conversation (memory across turns)
+
+# COMMAND ----------
+
+thread = "demo-conversation-1"
+ask("What's wrong with GOT-028?", thread)
+ask("What should the workshop check?", thread)
+ask("Has it had any cooling repairs before?", thread)

@@ -145,8 +145,8 @@ Rules:
 - For rankings add ORDER BY, and LIMIT 50 unless the user asks for everything.
 - If the question cannot be answered from these tables, return exactly: CANNOT_ANSWER
 Return only the SQL. No explanation, no markdown.
-- Answer EVERY part of the question. If it asks about "each" or "every" item, return one row per item (no LIMIT 1).
-- For "why" questions, include the columns that explain the reason (e.g. open_fault_list, pct_vs_peers, status).
+- For "why", trend or "was it fixed" questions about a truck, return its history over time
+  (e.g. all months from gold.vehicle_monthly_fuel ordered by month), not only the latest value.
 
 Business glossary:
 - Depot codes: GOT = Gothenburg, HAM = Hamburg, RTM = Rotterdam, CHI = Chicago.
